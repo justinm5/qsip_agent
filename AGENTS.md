@@ -38,4 +38,5 @@ Data sources (SEC EDGAR, Market, News/RSS, Earnings, Options) publish to `raw-ev
 - JWT secret should be changed in production via `JWT_SECRET`.
 - Paper trading defaults to simulated fills unless Alpaca keys are provided.
 - Recommendation API (`GET /api/v1/stocks/{ticker}/recommendation`, `GET /api/v1/stocks/trending`) combines Finnhub analyst ratings, price momentum, news sentiment, insider activity, earnings guidance, options flow, and the latest ML signal. Set `FINNHUB_KEY` for external data.
-- Optional cross-reference: set `RESEARCH_API_URL` and `RESEARCH_API_KEY` to merge signals from an external quant research API. The endpoint should be `GET {RESEARCH_API_URL}/{ticker}` and return JSON with `score` (-1..1), `recommendation`, `summary`, and optional `factors`.
+- Optional cross-reference: set `RESEARCH_API_URL` and `RESEARCH_API_KEY` to merge signals from an external quant research API. For QuantSignals, use `RESEARCH_API_URL=https://research.quantsignals.xyz`.
+- The frontend now keeps a simple local watchlist so users can save research-backed picks and track them on the dashboard.
