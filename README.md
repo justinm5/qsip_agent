@@ -2,9 +2,9 @@
 
 > Private repo: `https://github.com/justinm5/qsip_agent`
 
-A real-time, event-driven quantitative research platform that ingests SEC filings, market data, financial news, earnings transcripts, and options flow; validates data quality; normalizes events into a single stream; generates explainable alpha signals using rule-based factors and machine learning; backtests every signal; and runs a live paper trading portfolio.
+A real-time, event-driven quantitative research platform that ingests SEC filings, market data, financial news, earnings transcripts, and options flow; validates data quality; normalizes events into a single stream; and generates research-backed stock recommendations for non-technical investors. Recommendations combine Wall Street analyst ratings, price momentum, news sentiment, insider activity, earnings guidance, options flow, machine learning, and optional cross-checks from external quant research APIs.
 
-Built to demonstrate modern distributed systems, real-time data pipelines, and quantitative modeling with zero AI API spend.
+Built to help everyday investors make safer, more informed commitments to stocks and indexes with zero AI API spend.
 
 ## Architecture
 
@@ -35,7 +35,7 @@ SEC EDGAR   Market Data   News/RSS   Earnings   Options
             |
      API Gateway (JWT, RBAC, rate limit)
             |
-     React Dashboard (signals, recommendations, paper trading, research)
+     React Dashboard (simple stock search, research-backed recommendations, top picks)
 ```
 
 ## Tech Stack
