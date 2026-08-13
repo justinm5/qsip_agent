@@ -1336,16 +1336,16 @@ func round2(v float64) float64 {
 }
 
 func labelRecommendation(score float64) string {
-	if score >= 0.5 {
+	if score >= 0.75 {
 		return "Strong Buy"
 	}
-	if score >= 0.2 {
+	if score >= 0.25 {
 		return "Buy"
 	}
-	if score <= -0.5 {
+	if score <= -0.75 {
 		return "Strong Sell"
 	}
-	if score <= -0.2 {
+	if score <= -0.25 {
 		return "Sell"
 	}
 	return "Hold"
