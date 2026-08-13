@@ -590,8 +590,11 @@ func (g *Gateway) stockRecommendation(w http.ResponseWriter, r *http.Request) {
 
 func (g *Gateway) trendingStocks(w http.ResponseWriter, r *http.Request) {
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	if limit <= 0 || limit > len(trendingUniverse) {
+	if limit <= 0 || limit > 20 {
 		limit = 12
+	}
+	if limit > len(trendingUniverse) {
+		limit = len(trendingUniverse)
 	}
 
 	type result struct {
@@ -665,33 +668,139 @@ func (g *Gateway) recommendationForTicker(ctx context.Context, ticker string) (m
 		}
 	}
 
+	features := g.featureVectorForTicker(ctx, ticker)
+	signal := g.latestSignalForTicker(ctx, ticker)
+
 	apiKey := getEnv("FINNHUB_KEY", "")
-	if apiKey == "" {
-		rec := noDataRec(ticker)
+	var quote *finnhubQuote
+	var recs []finnhubRec
+	var candles *finnhubCandles
+
+	dbPrice, dbChange := g.latestMarketPrice(ctx, ticker)
+	if dbPrice > 0 {
+		quote = &finnhubQuote{C: dbPrice, DP: dbChange}
+	}
+
+	if apiKey != "" {
+		httpClient := &http.Client{Timeout: 10 * time.Second}
+		var err error
+		fq, err := g.finnhubQuote(ctx, httpClient, ticker, apiKey)
+		if err != nil {
+			slog.Warn("finnhub quote failed", "ticker", ticker, "err", err)
+		} else {
+			quote = fq
+		}
+		recs, err = g.finnhubRecommendations(ctx, httpClient, ticker, apiKey)
+		if err != nil {
+			slog.Warn("finnhub recommendation failed", "ticker", ticker, "err", err)
+		}
+		candles, err = g.finnhubCandles(ctx, httpClient, ticker, apiKey)
+		if err != nil {
+			slog.Warn("finnhub candles failed", "ticker", ticker, "err", err)
+		}
+	}
+
+	hasResearch := len(features) > 0 || signal != nil || len(recs) > 0 || candles != nil
+	if !hasResearch {
+		rec := noDataRec(ticker, features, signal, quote)
 		g.cacheRec(ctx, cacheKey, rec)
 		return rec, nil
 	}
 
-	httpClient := &http.Client{Timeout: 10 * time.Second}
+	rec := buildRecommendation(ticker, quote, recs, candles, features, signal)
 
-	quote, err := g.finnhubQuote(ctx, httpClient, ticker, apiKey)
+	ext, err := g.externalResearch(ctx, ticker)
 	if err != nil {
-		slog.Warn("finnhub quote failed", "ticker", ticker, "err", err)
+		slog.Warn("external research failed", "ticker", ticker, "err", err)
+	}
+	if ext != nil {
+		rec = mergeExternalResearch(rec, ext)
 	}
 
-	recs, err := g.finnhubRecommendations(ctx, httpClient, ticker, apiKey)
-	if err != nil {
-		slog.Warn("finnhub recommendation failed", "ticker", ticker, "err", err)
-	}
-
-	candles, err := g.finnhubCandles(ctx, httpClient, ticker, apiKey)
-	if err != nil {
-		slog.Warn("finnhub candles failed", "ticker", ticker, "err", err)
-	}
-
-	rec := buildRecommendation(ticker, quote, recs, candles)
 	g.cacheRec(ctx, cacheKey, rec)
 	return rec, nil
+}
+
+type externalResearchResult struct {
+	Score          float64          `json:"score"`
+	Recommendation string           `json:"recommendation"`
+	Summary        string           `json:"summary"`
+	Factors        []map[string]any `json:"factors"`
+}
+
+func (g *Gateway) externalResearch(ctx context.Context, ticker string) (*externalResearchResult, error) {
+	base := strings.TrimRight(getEnv("RESEARCH_API_URL", ""), "/")
+	if base == "" {
+		return nil, nil
+	}
+	url := fmt.Sprintf("%s/%s", base, ticker)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	if key := getEnv("RESEARCH_API_KEY", ""); key != "" {
+		req.Header.Set("Authorization", "Bearer "+key)
+	}
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("status %d", resp.StatusCode)
+	}
+	var ext externalResearchResult
+	if err := json.NewDecoder(resp.Body).Decode(&ext); err != nil {
+		return nil, err
+	}
+	return &ext, nil
+}
+
+func mergeExternalResearch(rec map[string]any, ext *externalResearchResult) map[string]any {
+	if ext == nil {
+		return rec
+	}
+	score, _ := rec["score"].(float64)
+	mergedScore := clamp(score*0.8+ext.Score*0.2, -1, 1)
+	rec["score"] = round2(mergedScore)
+	rec["recommendation"] = labelRecommendation(mergedScore)
+	rec["research_score"] = int(math.Round((mergedScore + 1) * 50))
+
+	if ext.Summary != "" {
+		if summary, ok := rec["summary"].(string); ok {
+			rec["summary"] = ext.Summary + " " + summary
+		} else {
+			rec["summary"] = ext.Summary
+		}
+	}
+
+	if len(ext.Factors) > 0 {
+		existing, _ := rec["factors"].([]map[string]any)
+		for _, f := range ext.Factors {
+			if f["label"] != nil {
+				f["label"] = fmt.Sprintf("External: %v", f["label"])
+			}
+			if f["sentiment"] == nil {
+				f["sentiment"] = "neutral"
+			}
+			existing = append(existing, f)
+		}
+		rec["factors"] = existing
+	}
+
+	if ext.Recommendation != "" {
+		existing, _ := rec["factors"].([]map[string]any)
+		existing = append(existing, map[string]any{
+			"label":     "External research",
+			"value":     ext.Recommendation,
+			"detail":    "Cross-referenced from an external quant research source",
+			"sentiment": sentimentFromScore(ext.Score),
+		})
+		rec["factors"] = existing
+	}
+
+	return rec
 }
 
 func (g *Gateway) cacheRec(ctx context.Context, key string, rec map[string]any) {
@@ -767,22 +876,111 @@ func (g *Gateway) finnhubCandles(ctx context.Context, client *http.Client, ticke
 	return &c, nil
 }
 
-func noDataRec(ticker string) map[string]any {
-	return map[string]any{
-		"ticker":         ticker,
-		"name":           ticker,
-		"price":          nil,
-		"change_pct":     0.0,
-		"analyst_rating": "No data",
-		"analyst_count":  0,
-		"recommendation": "No data",
-		"score":          0.0,
-		"summary":        "We don't have data for this ticker right now. Add a Finnhub API key or try again later.",
-		"signals":        []map[string]any{},
+func (g *Gateway) featureVectorForTicker(ctx context.Context, ticker string) map[string]float64 {
+	row := g.db.QueryRow(ctx, `
+		SELECT features FROM feature_vectors
+		WHERE ticker = $1 AND feature_version = 'v1'
+		ORDER BY timestamp DESC LIMIT 1`, ticker)
+	var raw []byte
+	if err := row.Scan(&raw); err != nil || len(raw) == 0 {
+		return nil
 	}
+	var f map[string]float64
+	if err := json.Unmarshal(raw, &f); err != nil {
+		slog.Warn("failed to parse feature vector", "ticker", ticker, "err", err)
+		return nil
+	}
+	return f
 }
 
-func buildRecommendation(ticker string, quote *finnhubQuote, recs []finnhubRec, candles *finnhubCandles) map[string]any {
+func (g *Gateway) latestSignalForTicker(ctx context.Context, ticker string) map[string]any {
+	row := g.db.QueryRow(ctx, `
+		SELECT direction, score, ml_score, features, metadata
+		FROM signals WHERE ticker = $1 ORDER BY timestamp DESC LIMIT 1`, ticker)
+	var direction string
+	var score, mlScore *float64
+	var features, metadata []byte
+	if err := row.Scan(&direction, &score, &mlScore, &features, &metadata); err != nil {
+		return nil
+	}
+	out := map[string]any{
+		"direction": direction,
+		"score":     coalesceFloat64(score),
+	}
+	if mlScore != nil {
+		out["ml_score"] = *mlScore
+	}
+	if len(features) > 0 {
+		var f map[string]any
+		_ = json.Unmarshal(features, &f)
+		out["features"] = f
+	}
+	if len(metadata) > 0 {
+		var m map[string]any
+		_ = json.Unmarshal(metadata, &m)
+		out["metadata"] = m
+	}
+	return out
+}
+
+func (g *Gateway) latestMarketPrice(ctx context.Context, ticker string) (float64, float64) {
+	rows, err := g.db.Query(ctx, `
+		SELECT close FROM market_data WHERE ticker = $1 ORDER BY time DESC LIMIT 2`, ticker)
+	if err != nil {
+		return 0, 0
+	}
+	defer rows.Close()
+	var prices []float64
+	for rows.Next() {
+		var c *float64
+		if err := rows.Scan(&c); err != nil {
+			continue
+		}
+		prices = append(prices, coalesceFloat64(c))
+	}
+	if len(prices) == 0 {
+		return 0, 0
+	}
+	if len(prices) == 1 || prices[1] == 0 {
+		return prices[0], 0
+	}
+	return prices[0], (prices[0]-prices[1])/prices[1]*100
+}
+
+func noDataRec(ticker string, features map[string]float64, signal map[string]any, quote *finnhubQuote) map[string]any {
+	if len(features) == 0 && signal == nil {
+		var price any = nil
+		changePct := 0.0
+		if quote != nil && quote.C > 0 {
+			price = round2(quote.C)
+			changePct = quote.DP
+		}
+		return map[string]any{
+			"ticker":         ticker,
+			"name":           ticker,
+			"price":          price,
+			"change_pct":     round2(changePct),
+			"analyst_rating": "No data",
+			"analyst_count":  0,
+			"recommendation": "No data",
+			"research_score": 0,
+			"conviction":     "None",
+			"score":          0.0,
+			"summary":        "We don't have enough research data for this ticker right now. Add a Finnhub API key, wait for the data pipeline to populate, or try a larger ticker.",
+			"factors":        []map[string]any{},
+		}
+	}
+	return buildRecommendation(ticker, quote, nil, nil, features, signal)
+}
+
+func buildRecommendation(ticker string, quote *finnhubQuote, recs []finnhubRec, candles *finnhubCandles, features map[string]float64, signal map[string]any) map[string]any {
+	f := func(key string) float64 {
+		if features == nil {
+			return 0
+		}
+		return features[key]
+	}
+
 	var price any = nil
 	changePct := 0.0
 	if quote != nil && quote.C > 0 {
@@ -790,40 +988,108 @@ func buildRecommendation(ticker string, quote *finnhubQuote, recs []finnhubRec, 
 		changePct = quote.DP
 	}
 
-	analystScore := 0.0
-	analystRating := "No analyst data"
-	analystCount := 0
-	if len(recs) > 0 {
-		latest := recs[0]
-		for _, r := range recs {
-			if r.Period > latest.Period {
-				latest = r
-			}
-		}
-		total := latest.StrongBuy + latest.Buy + latest.Hold + latest.Sell + latest.StrongSell
-		if total > 0 {
-			analystCount = total
-			weighted := float64(latest.StrongBuy*2+latest.Buy*1+latest.Sell*-1+latest.StrongSell*-2) / float64(total)
-			analystScore = weighted / 2.0 // normalize -1..1
-			if analystScore >= 0.5 {
-				analystRating = "Strong Buy"
-			} else if analystScore >= 0.2 {
-				analystRating = "Buy"
-			} else if analystScore <= -0.5 {
-				analystRating = "Strong Sell"
-			} else if analystScore <= -0.2 {
-				analystRating = "Sell"
-			} else {
-				analystRating = "Hold"
-			}
+	analystScore, analystRating, analystCount := analystScores(recs)
+
+	momentumScore, momentumDetail := momentumScores(candles, f)
+
+	newsScore := f("news_sentiment_mean")
+	newsLabel, newsDetail := labelSentiment(newsScore, "News sentiment is")
+
+	insiderScore := insiderScoreFromFeatures(f)
+	insiderLabel, insiderDetail := insiderLabel(insiderScore, f)
+
+	earningsScore := f("guidance_change")
+	if earningsScore == 0 {
+		earningsScore = f("earnings_sentiment") * 0.5
+	}
+	earningsLabel, earningsDetail := earningsLabel(earningsScore)
+
+	optionsScore := optionsScoreFromFeatures(f)
+	optionsLabel, optionsDetail := optionsLabel(optionsScore, f)
+
+	mlScore := 0.0
+	hasML := false
+	if signal != nil {
+		if ml, ok := signal["ml_score"].(float64); ok {
+			mlScore = (ml - 0.5) * 2
+			hasML = true
 		}
 	}
+	mlLabel, mlDetail := mlLabel(mlScore)
 
-	momentumScore := 0.0
-	return20 := 0.0
-	return60 := 0.0
-	volumeRatio := 1.0
-	rsi := 50.0
+	// Weighted ensemble. If a source is missing (score == 0 and no data), its weight is effectively neutral.
+	combined := 0.25*analystScore + 0.20*momentumScore + 0.15*newsScore + 0.15*insiderScore + 0.10*earningsScore + 0.10*optionsScore + 0.05*mlScore
+	combined = clamp(combined, -1, 1)
+	recommendation := labelRecommendation(combined)
+	researchScore := int(math.Round((combined + 1) * 50))
+	conviction := convictionLabel(combined, []float64{analystScore, momentumScore, newsScore, insiderScore, earningsScore, optionsScore, mlScore})
+
+	factors := []map[string]any{}
+	if analystCount > 0 {
+		factors = append(factors, factor("Analyst consensus", analystRating, fmt.Sprintf("Based on %d Wall Street ratings", analystCount), sentimentFromScore(analystScore)))
+	}
+	if momentumDetail != nil && momentumDetail["headline"] != "" {
+		factors = append(factors, factor("Momentum", momentumDetail["headline"], momentumDetail["detail"], sentimentFromScore(momentumScore)))
+	}
+	if f("news_count_24h") > 0 || mathAbs(newsScore) > 0.05 {
+		factors = append(factors, factor("News sentiment", newsLabel, newsDetail, sentimentFromScore(newsScore)))
+	}
+	if f("insider_buy_ratio") > 0 || f("insider_net_dollars_30d") != 0 {
+		factors = append(factors, factor("Insider activity", insiderLabel, insiderDetail, sentimentFromScore(insiderScore)))
+	}
+	if f("guidance_change") != 0 || f("earnings_sentiment") != 0 {
+		factors = append(factors, factor("Earnings guidance", earningsLabel, earningsDetail, sentimentFromScore(earningsScore)))
+	}
+	if f("call_put_ratio") > 0 || f("options_activity_score") > 0 {
+		factors = append(factors, factor("Options activity", optionsLabel, optionsDetail, sentimentFromScore(optionsScore)))
+	}
+	if hasML {
+		factors = append(factors, factor("Machine learning signal", mlLabel, mlDetail, sentimentFromScore(mlScore)))
+	}
+
+	summary := buildSummary(recommendation, analystRating, momentumDetail, newsLabel, insiderLabel, earningsLabel, optionsLabel, analystCount)
+
+	return map[string]any{
+		"ticker":         ticker,
+		"name":           ticker,
+		"price":          price,
+		"change_pct":     round2(changePct),
+		"analyst_rating": analystRating,
+		"analyst_count":  analystCount,
+		"recommendation": recommendation,
+		"score":          round2(combined),
+		"research_score": researchScore,
+		"conviction":     conviction,
+		"summary":        summary,
+		"factors":        factors,
+	}
+}
+
+func analystScores(recs []finnhubRec) (float64, string, int) {
+	if len(recs) == 0 {
+		return 0, "No analyst data", 0
+	}
+	latest := recs[0]
+	for _, r := range recs {
+		if r.Period > latest.Period {
+			latest = r
+		}
+	}
+	total := latest.StrongBuy + latest.Buy + latest.Hold + latest.Sell + latest.StrongSell
+	if total == 0 {
+		return 0, "No analyst data", 0
+	}
+	weighted := float64(latest.StrongBuy*2+latest.Buy*1+latest.Sell*-1+latest.StrongSell*-2) / float64(total)
+	score := clamp(weighted/2.0, -1, 1)
+	return score, labelRecommendation(score), total
+}
+
+func momentumScores(candles *finnhubCandles, f func(string) float64) (float64, map[string]string) {
+	return20 := f("return_20d")
+	return60 := f("return_60d")
+	volumeRatio := f("volume_ratio")
+	rsi := f("rsi_14")
+
 	if candles != nil && len(candles.C) >= 21 && len(candles.V) >= 21 {
 		closes := candles.C
 		volumes := candles.V
@@ -844,77 +1110,186 @@ func buildRecommendation(ticker string, quote *finnhubQuote, recs []finnhubRec, 
 			volumeRatio = float64(volumes[len(volumes)-1]) / float64(avgVol)
 		}
 		rsi = computeRSI(closes, 14)
-
-		momentumScore = (return20*1.5 + return60*0.5 + clamp((volumeRatio-1)/3, -0.5, 0.5) + (rsi-50)/100) / 2.5
-		momentumScore = clamp(momentumScore, -1, 1)
+	} else if volumeRatio == 0 {
+		volumeRatio = 1.0
 	}
 
-	combined := 0.6*analystScore + 0.4*momentumScore
-	combined = clamp(combined, -1, 1)
-	recommendation := labelRecommendation(combined)
-
-	signals := []map[string]any{}
-	if analystRating != "No analyst data" {
-		signals = append(signals, map[string]any{
-			"label":  "Analyst consensus",
-			"value":  analystRating,
-			"detail": fmt.Sprintf("Based on %d analyst ratings", analystCount),
-		})
-	}
-	if candles != nil && len(candles.C) >= 21 {
-		signals = append(signals, map[string]any{
-			"label":  "20-day price trend",
-			"value":  fmt.Sprintf("%+.1f%%", return20*100),
-			"detail": "How the price has moved over the last month",
-		})
-	}
-	if candles != nil && len(candles.C) >= 61 {
-		signals = append(signals, map[string]any{
-			"label":  "3-month trend",
-			"value":  fmt.Sprintf("%+.1f%%", return60*100),
-			"detail": "Longer-term price direction",
-		})
-	}
-	if candles != nil && len(candles.C) >= 21 && len(candles.V) >= 21 {
-		signals = append(signals, map[string]any{
-			"label":  "Volume vs average",
-			"value":  fmt.Sprintf("%.1fx", volumeRatio),
-			"detail": "Recent volume compared to the 20-day average",
-		})
-		signals = append(signals, map[string]any{
-			"label":  "Momentum (RSI)",
-			"value":  fmt.Sprintf("%.0f", rsi),
-			"detail": "Above 70 can mean overbought; below 30 can mean oversold",
-		})
+	if rsi == 0 {
+		rsi = 50.0
 	}
 
-	summary := fmt.Sprintf("Overall recommendation is %s. ", recommendation)
-	if analystRating != "No analyst data" {
-		summary += fmt.Sprintf("Wall Street analysts say %s. ", analystRating)
+	score := (return20*1.5 + return60*0.5 + clamp((volumeRatio-1)/3, -0.5, 0.5) + (rsi-50)/100) / 2.5
+	score = clamp(score, -1, 1)
+
+	hasData := candles != nil || f("return_20d") != 0 || f("rsi_14") != 0 || f("volume_ratio") != 0
+	if !hasData {
+		return score, nil
 	}
-	if candles != nil && len(candles.C) >= 21 {
-		direction := "up"
-		if return20 < 0 {
-			direction = "down"
-		}
-		summary += fmt.Sprintf("Price is %s %.1f%% over the last 20 trading days.", direction, mathAbs(return20)*100)
-	}
+
+	headline := fmt.Sprintf("%+.1f%% over 20 days, RSI %.0f", return20*100, rsi)
+	detail := "Price trend and momentum"
 	if volumeRatio > 2 {
-		summary += " Trading volume is unusually high."
+		detail = fmt.Sprintf("Volume is %.1fx its average. %s", volumeRatio, detail)
 	}
+	return score, map[string]string{"headline": headline, "detail": detail}
+}
 
-	return map[string]any{
-		"ticker":         ticker,
-		"name":           ticker,
-		"price":          price,
-		"change_pct":     round2(changePct),
-		"analyst_rating": analystRating,
-		"analyst_count":  analystCount,
-		"recommendation": recommendation,
-		"score":          round2(combined),
-		"summary":        summary,
-		"signals":        signals,
+func labelSentiment(score float64, prefix string) (string, string) {
+	if score > 0.25 {
+		return "Positive", fmt.Sprintf("%s bullish", prefix)
 	}
+	if score < -0.25 {
+		return "Negative", fmt.Sprintf("%s bearish", prefix)
+	}
+	return "Neutral", fmt.Sprintf("%s mixed or quiet", prefix)
+}
+
+func insiderScoreFromFeatures(f func(string) float64) float64 {
+	ratio := f("insider_buy_ratio")
+	net := f("insider_net_dollars_30d")
+	if ratio > 0 {
+		score := (ratio - 0.5) * 2
+		if net > 500_000 {
+			score += 0.1
+		}
+		if net < -500_000 {
+			score -= 0.1
+		}
+		return clamp(score, -1, 1)
+	}
+	if net != 0 {
+		return clamp(net/1_000_000, -1, 1)
+	}
+	return 0
+}
+
+func insiderLabel(score float64, f func(string) float64) (string, string) {
+	if score > 0.2 {
+		detail := "Company insiders are net buyers"
+		if f("insider_buy_ratio") > 0 {
+			detail = fmt.Sprintf("%.0f%% of recent insider trades were buys", f("insider_buy_ratio")*100)
+		}
+		return "Net buying", detail
+	}
+	if score < -0.2 {
+		return "Net selling", "Company insiders are selling more than buying"
+	}
+	return "Quiet", "No strong insider signal"
+}
+
+func earningsLabel(score float64) (string, string) {
+	if score > 0.3 {
+		return "Raised guidance", "Management raised future guidance"
+	}
+	if score < -0.3 {
+		return "Lowered guidance", "Management lowered future guidance"
+	}
+	return "No change", "Guidance and earnings sentiment are neutral"
+}
+
+func optionsScoreFromFeatures(f func(string) float64) float64 {
+	cp := f("call_put_ratio")
+	activity := f("options_activity_score")
+	score := 0.0
+	if cp > 0 {
+		score += clamp((cp-1)/2, -1, 1)
+	}
+	if activity > 0 {
+		score += clamp(activity/10, -0.5, 0.5)
+	}
+	return clamp(score, -1, 1)
+}
+
+func optionsLabel(score float64, f func(string) float64) (string, string) {
+	if score > 0.2 {
+		detail := "Options traders are leaning bullish"
+		if f("call_put_ratio") > 0 {
+			detail = fmt.Sprintf("Call/put ratio is %.1f", f("call_put_ratio"))
+		}
+		return "Bullish flow", detail
+	}
+	if score < -0.2 {
+		return "Bearish flow", "Options traders are leaning bearish"
+	}
+	return "Neutral flow", "No unusual options activity"
+}
+
+func mlLabel(score float64) (string, string) {
+	if score > 0.3 {
+		return "Bullish", "Machine learning model predicts upside"
+	}
+	if score < -0.3 {
+		return "Bearish", "Machine learning model predicts downside"
+	}
+	return "Neutral", "Machine learning model is mixed"
+}
+
+func factor(label, value, detail, sentiment string) map[string]any {
+	return map[string]any{
+		"label":     label,
+		"value":     value,
+		"detail":    detail,
+		"sentiment": sentiment,
+	}
+}
+
+func sentimentFromScore(score float64) string {
+	if score > 0.2 {
+		return "positive"
+	}
+	if score < -0.2 {
+		return "negative"
+	}
+	return "neutral"
+}
+
+func convictionLabel(score float64, inputs []float64) string {
+	aligned := 0
+	strong := 0
+	for _, s := range inputs {
+		if score >= 0 && s > 0.15 {
+			aligned++
+			if s > 0.4 {
+				strong++
+			}
+		}
+		if score < 0 && s < -0.15 {
+			aligned++
+			if s < -0.4 {
+				strong++
+			}
+		}
+	}
+	if aligned >= 4 && strong >= 2 && mathAbs(score) >= 0.5 {
+		return "High"
+	}
+	if aligned >= 2 && mathAbs(score) >= 0.2 {
+		return "Medium"
+	}
+	return "Low"
+}
+
+func buildSummary(recommendation, analystRating string, momentumDetail map[string]string, newsLabel, insiderLabel, earningsLabel, optionsLabel string, analystCount int) string {
+	parts := []string{fmt.Sprintf("Overall recommendation: %s.", recommendation)}
+	if analystCount > 0 {
+		parts = append(parts, fmt.Sprintf("Wall Street analysts say %s.", analystRating))
+	}
+	if momentumDetail != nil && momentumDetail["headline"] != "" {
+		parts = append(parts, fmt.Sprintf("Momentum is %s.", strings.ToLower(momentumDetail["headline"])))
+	}
+	if newsLabel != "Neutral" {
+		parts = append(parts, fmt.Sprintf("News sentiment is %s.", strings.ToLower(newsLabel)))
+	}
+	if insiderLabel != "Quiet" {
+		parts = append(parts, fmt.Sprintf("Insiders are showing %s.", strings.ToLower(insiderLabel)))
+	}
+	if earningsLabel != "No change" {
+		parts = append(parts, fmt.Sprintf("Earnings guidance is %s.", strings.ToLower(earningsLabel)))
+	}
+	if optionsLabel != "Neutral flow" {
+		parts = append(parts, fmt.Sprintf("Options flow is %s.", strings.ToLower(optionsLabel)))
+	}
+	return strings.Join(parts, " ")
 }
 
 func computeRSI(prices []float64, window int) float64 {

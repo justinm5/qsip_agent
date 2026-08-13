@@ -4,10 +4,9 @@ import TrendingCard from './TrendingCard'
 
 interface Props {
   onSelect: (ticker: string) => void
-  onBuy?: () => void
 }
 
-export default function TrendingList({ onSelect, onBuy }: Props) {
+export default function TrendingList({ onSelect }: Props) {
   const { data, isLoading, error } = useQuery<StockRecommendation[], Error>({
     queryKey: ['trending'],
     queryFn: () => fetchTrendingStocks(12),
@@ -43,7 +42,7 @@ export default function TrendingList({ onSelect, onBuy }: Props) {
       <h2 className="text-lg font-semibold text-slate-200 mb-3">Top opportunities right now</h2>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
         {data.map((stock) => (
-          <TrendingCard key={stock.ticker} stock={stock} onSelect={onSelect} onBuy={onBuy} />
+          <TrendingCard key={stock.ticker} stock={stock} onSelect={onSelect} />
         ))}
       </div>
     </div>

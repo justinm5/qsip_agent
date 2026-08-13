@@ -145,6 +145,8 @@ services:
       REDIS_ADDR: redis:6379
       JWT_SECRET: ${JWT_SECRET:-change-me}
       FINNHUB_KEY: ${FINNHUB_KEY:-}
+      RESEARCH_API_URL: ${RESEARCH_API_URL:-}
+      RESEARCH_API_KEY: ${RESEARCH_API_KEY:-}
       PAPER_TRADING_SERVICE_URL: http://paper-trading-service:8088
       RESEARCH_RESULTS_PATH: /app/research/signal_performance.json
       OTLP_ENDPOINT: jaeger:4317

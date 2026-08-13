@@ -92,38 +92,6 @@ export interface Recommendation {
 export const fetchTopRecommendations = (limit = 10): Promise<Recommendation[]> =>
   api.get(`/top-recommendations?limit=${limit}`).then((r) => r.data)
 
-export interface PaperAccount {
-  strategy: string
-  cash: number
-  equity: number
-  buying_power: number
-}
-
-export interface PaperPosition {
-  ticker: string
-  qty: number
-  avg_entry_price: number
-  market_price: number
-  market_value: number
-  unrealized_pnl: number
-  realized_pnl: number
-  side: string
-}
-
-export interface PaperTrade {
-  trade_id: string
-  ticker: string
-  side: string
-  qty: number
-  price: number
-  total_value: number
-  executed_at: string
-}
-
-export const fetchPaperAccount = (): Promise<PaperAccount> => api.get('/paper/account').then((r) => r.data)
-export const fetchPaperPositions = (): Promise<PaperPosition[]> => api.get('/paper/positions').then((r) => r.data)
-export const fetchPaperTrades = (): Promise<PaperTrade[]> => api.get('/paper/trades').then((r) => r.data)
-
 export interface StockRecommendation {
   ticker: string
   name: string
@@ -133,8 +101,10 @@ export interface StockRecommendation {
   analyst_count: number
   recommendation: string
   score: number
+  research_score: number
+  conviction: string
   summary: string
-  signals: { label: string; value: string; detail: string }[]
+  factors: { label: string; value: string; detail: string; sentiment: 'positive' | 'negative' | 'neutral' }[]
 }
 
 export const fetchStockRecommendation = (ticker: string): Promise<StockRecommendation> =>
@@ -142,9 +112,6 @@ export const fetchStockRecommendation = (ticker: string): Promise<StockRecommend
 
 export const fetchTrendingStocks = (limit = 12): Promise<StockRecommendation[]> =>
   api.get(`/stocks/trending?limit=${limit}`).then((r) => r.data)
-
-export const createPaperOrder = (payload: { ticker: string; qty: number; side: string; price?: number; order_type?: string }): Promise<Record<string, unknown>> =>
-  api.post('/paper/order', payload).then((r) => r.data)
 
 export const login = (username: string, password: string): Promise<{ token: string }> =>
   api.post('/auth/login', { username, password }).then((r) => r.data)
