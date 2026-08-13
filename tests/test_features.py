@@ -1,5 +1,6 @@
 import numpy as np
 import polars as pl
+import pytest
 
 from qsip.features import compute_filing_features, compute_news_features, compute_price_features
 
