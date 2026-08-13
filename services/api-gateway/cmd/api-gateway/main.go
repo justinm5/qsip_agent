@@ -733,7 +733,19 @@ func (g *Gateway) externalResearch(ctx context.Context, ticker string) (*externa
 	if base == "" {
 		return nil, nil
 	}
-	url := fmt.Sprintf("%s/%s", base, ticker)
+
+	isQuantSignals := strings.HasSuffix(base, "/api/v1") || strings.Contains(base, "quantsignals")
+	if isQuantSignals && !strings.HasSuffix(base, "/api/v1") {
+		base = base + "/api/v1"
+	}
+
+	var url string
+	if isQuantSignals {
+		url = fmt.Sprintf("%s/signals?ticker=%s&limit=1", base, ticker)
+	} else {
+		url = fmt.Sprintf("%s/%s", base, ticker)
+	}
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
@@ -750,11 +762,127 @@ func (g *Gateway) externalResearch(ctx context.Context, ticker string) (*externa
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("status %d", resp.StatusCode)
 	}
+
+	if isQuantSignals {
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, err
+		}
+		return parseQuantSignalsResponse(body)
+	}
+
 	var ext externalResearchResult
 	if err := json.NewDecoder(resp.Body).Decode(&ext); err != nil {
 		return nil, err
 	}
 	return &ext, nil
+}
+
+func parseQuantSignalsResponse(body []byte) (*externalResearchResult, error) {
+	var root any
+	if err := json.Unmarshal(body, &root); err != nil {
+		return nil, err
+	}
+
+	var item map[string]any
+	switch v := root.(type) {
+	case map[string]any:
+		if data, ok := v["data"].([]any); ok && len(data) > 0 {
+			if m, ok := data[0].(map[string]any); ok {
+				item = m
+			}
+		} else {
+			item = v
+		}
+	case []any:
+		if len(v) > 0 {
+			if m, ok := v[0].(map[string]any); ok {
+				item = m
+			}
+		}
+	}
+	if item == nil {
+		return nil, nil
+	}
+
+	direction := anyToString(item["direction"]) + anyToString(item["side"])
+	thesis := anyToString(item["thesis"])
+	if thesis == "" {
+		thesis = anyToString(item["summary"])
+	}
+	if thesis == "" {
+		thesis = anyToString(item["narrative"])
+	}
+
+	score := 0.0
+	if s, ok := item["score"].(float64); ok {
+		score = s
+		if score >= 0 && score <= 1 {
+			score = (score - 0.5) * 2
+		}
+	} else if p, ok := item["predicted_pct"].(float64); ok {
+		score = clamp(p*10, -1, 1)
+	} else if c, ok := item["conviction"].(float64); ok {
+		score = (c - 0.5) * 2
+	} else {
+		score = directionToScore(direction)
+	}
+
+	recommendation := anyToString(item["recommendation"])
+	if recommendation == "" {
+		recommendation = anyToString(item["signal"])
+	}
+	if recommendation == "" {
+		recommendation = labelRecommendation(score)
+	}
+
+	summary := fmt.Sprintf("QuantSignals view: %s.", recommendation)
+	if thesis != "" {
+		summary = fmt.Sprintf("QuantSignals view: %s. %s", recommendation, thesis)
+	}
+
+	return &externalResearchResult{
+		Score:          score,
+		Recommendation: recommendation,
+		Summary:        summary,
+		Factors: []map[string]any{
+			{
+				"label":     "QuantSignals cross-check",
+				"value":     recommendation,
+				"detail":    thesis,
+				"sentiment": sentimentFromScore(score),
+			},
+		},
+	}, nil
+}
+
+func anyToString(v any) string {
+	if v == nil {
+		return ""
+	}
+	switch s := v.(type) {
+	case string:
+		return s
+	case float64:
+		return fmt.Sprintf("%g", s)
+	case int:
+		return fmt.Sprintf("%d", s)
+	case bool:
+		return fmt.Sprintf("%t", s)
+	default:
+		return ""
+	}
+}
+
+func directionToScore(dir string) float64 {
+	d := strings.ToLower(dir)
+	if strings.Contains(d, "bull") || strings.Contains(d, "buy") || strings.Contains(d, "long") {
+		return 0.6
+	}
+	if strings.Contains(d, "bear") || strings.Contains(d, "sell") || strings.Contains(d, "short") {
+		return -0.6
+	}
+	return 0
 }
 
 func mergeExternalResearch(rec map[string]any, ext *externalResearchResult) map[string]any {
@@ -787,9 +915,7 @@ func mergeExternalResearch(rec map[string]any, ext *externalResearchResult) map[
 			existing = append(existing, f)
 		}
 		rec["factors"] = existing
-	}
-
-	if ext.Recommendation != "" {
+	} else if ext.Recommendation != "" {
 		existing, _ := rec["factors"].([]map[string]any)
 		existing = append(existing, map[string]any{
 			"label":     "External research",
