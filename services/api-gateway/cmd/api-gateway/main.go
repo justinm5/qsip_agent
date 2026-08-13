@@ -147,8 +147,7 @@ func (g *Gateway) authMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		ctx := context.WithValue(r.Context(), "claims", claims)
-		next.ServeHTTP(w, r.WithContext(ctx))
+		next.ServeHTTP(w, r)
 	})
 }
 
@@ -257,11 +256,11 @@ func (g *Gateway) listSignals(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if len(features) > 0 {
-			json.Unmarshal(features, &s)
+			_ = json.Unmarshal(features, &s)
 		}
 		var meta map[string]any
 		if len(metadata) > 0 {
-			json.Unmarshal(metadata, &meta)
+			_ = json.Unmarshal(metadata, &meta)
 		}
 		out = append(out, map[string]any{
 			"signal_id": sid, "timestamp": ts, "ticker": ticker, "signal_type": stype,
@@ -298,7 +297,7 @@ func (g *Gateway) listSignalsByTicker(w http.ResponseWriter, r *http.Request) {
 		}
 		var meta map[string]any
 		if len(metadata) > 0 {
-			json.Unmarshal(metadata, &meta)
+			_ = json.Unmarshal(metadata, &meta)
 		}
 		out = append(out, map[string]any{
 			"signal_id": sid, "timestamp": ts, "signal_type": stype,
@@ -321,11 +320,11 @@ func (g *Gateway) explainSignal(w http.ResponseWriter, r *http.Request) {
 	}
 	var shapMap map[string]any
 	if len(shap) > 0 {
-		json.Unmarshal(shap, &shapMap)
+		_ = json.Unmarshal(shap, &shapMap)
 	}
 	var topList []map[string]any
 	if len(top) > 0 {
-		json.Unmarshal(top, &topList)
+		_ = json.Unmarshal(top, &topList)
 	}
 	writeJSON(w, map[string]any{
 		"signal_id":    signalID,
@@ -405,7 +404,7 @@ func (g *Gateway) featureStore(w http.ResponseWriter, r *http.Request) {
 	}
 	var f map[string]any
 	if len(features) > 0 {
-		json.Unmarshal(features, &f)
+		_ = json.Unmarshal(features, &f)
 	}
 	writeJSON(w, map[string]any{"ticker": ticker, "version": version, "timestamp": ts, "features": f})
 }
@@ -511,7 +510,7 @@ func (g *Gateway) topRecommendations(w http.ResponseWriter, r *http.Request) {
 		}
 		var features []map[string]any
 		if len(top) > 0 {
-			json.Unmarshal(top, &features)
+			_ = json.Unmarshal(top, &features)
 		}
 		out = append(out, map[string]any{
 			"signal_id": sid, "timestamp": ts, "ticker": ticker, "signal_type": stype,
@@ -530,7 +529,7 @@ func (g *Gateway) researchPerformance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	w.Write(data)
+	_, _ = w.Write(data)
 }
 
 func (g *Gateway) proxyPaper(w http.ResponseWriter, r *http.Request, path string) {
@@ -558,7 +557,7 @@ func (g *Gateway) proxyPaper(w http.ResponseWriter, r *http.Request, path string
 	}
 	defer resp.Body.Close()
 	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body)
+	_, _ = io.Copy(w, resp.Body)
 }
 
 func (g *Gateway) paperAccount(w http.ResponseWriter, r *http.Request) { g.proxyPaper(w, r, "/paper/account") }

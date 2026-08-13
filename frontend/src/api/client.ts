@@ -19,7 +19,7 @@ export interface Signal {
   score: number
   ml_score: number
   features?: Record<string, number>
-  metadata?: Record<string, any>
+  metadata?: Record<string, unknown>
 }
 
 export interface BacktestSummary {
