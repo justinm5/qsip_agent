@@ -69,7 +69,7 @@ class EarningsTranscriptClient:
 
     def _guidance_change(self, text: str) -> str:
         lowered = text.lower()
-        raised = len(re.findall(r"\b(raised|increased|upward|above prior|better than expected|strong guidance)\b", lowered))
+        raised = len(re.findall(r"\b(raised|raising|increased|upward|above prior|better than expected|strong guidance)\b", lowered))
         lowered_count = len(re.findall(r"\b(lowered|decreased|downward|below prior|weak guidance|cut guidance)\b", lowered))
         if raised > lowered_count:
             return "raised"

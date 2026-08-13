@@ -30,4 +30,4 @@ def test_compute_filing_features():
 def test_compute_news_features():
     articles = [{"sentiment_score": 0.8}, {"sentiment_score": -0.2}]
     feats = compute_news_features(articles)
-    assert feats["news_sentiment_mean"] == 0.3
+    assert feats["news_sentiment_mean"] == pytest.approx(0.3)

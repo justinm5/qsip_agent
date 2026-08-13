@@ -2,9 +2,8 @@ FROM golang:1.23-alpine AS builder
 WORKDIR /app
 RUN apk add --no-cache git
 COPY go.mod ./
-RUN go mod tidy
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o /api-gateway ./cmd/api-gateway
+RUN go mod tidy && CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o /api-gateway ./cmd/api-gateway
 
 FROM gcr.io/distroless/static-debian12
 COPY --from=builder /api-gateway /api-gateway

@@ -58,7 +58,7 @@ class DataValidator:
         avg_volume = df["volume"].mean()
         if avg_volume and avg_volume > 0:
             max_ratio = (df["volume"].max() or 0) / avg_volume
-            if max_ratio > 100:
+            if max_ratio > 20:
                 issues.append(self._issue("market", "ohlcv", None, "volume_outlier", "warning", {}, f"volume {max_ratio:.1f}x mean"))
 
         # Bad OHLC (high < low, negative prices)
