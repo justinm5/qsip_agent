@@ -1,13 +1,9 @@
 """Integration tests using mocked Kafka/DB."""
 
-from qsip.db import TimescaleDB
-from qsip.kafka_client import KafkaProducer
 from qsip.validation import DataValidator
 
 
 def test_duplicate_filing_only_one_stored(monkeypatch):
-    stored = []
-
     class FakeDB:
         def insert_data_quality_issue(self, issue):
             pass

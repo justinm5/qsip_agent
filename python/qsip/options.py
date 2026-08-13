@@ -21,7 +21,7 @@ class OptionsFlowClient:
             return []
         try:
             # Snapshot of option contracts for ticker
-            url = f"https://api.polygon.io/v3/reference/options/contracts"
+            url = "https://api.polygon.io/v3/reference/options/contracts"
             params = {
                 "underlying_ticker": ticker,
                 "apiKey": self.polygon_key,

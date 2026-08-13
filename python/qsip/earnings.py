@@ -28,7 +28,7 @@ class EarningsTranscriptClient:
 
     def _fetch_fmp(self, ticker: str) -> list[dict[str, Any]]:
         try:
-            url = f"https://financialmodelingprep.com/api/v4/earning_call_transcript"
+            url = "https://financialmodelingprep.com/api/v4/earning_call_transcript"
             r = self.client.get(url, params={"symbol": ticker, "quarter": "1", "year": "2024", "apikey": self.fmp_key})
             r.raise_for_status()
             data = r.json()

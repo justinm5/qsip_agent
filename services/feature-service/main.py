@@ -4,6 +4,7 @@ import os
 import threading
 import time
 from datetime import datetime, timedelta
+from typing import Any
 
 import polars as pl
 from prometheus_client import Counter, Histogram, start_http_server

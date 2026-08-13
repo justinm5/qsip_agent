@@ -76,7 +76,7 @@ class PortfolioEngine:
                     shares = allocation / price
                     positions[ticker] = {"shares": shares, "entry_price": price, "weight": h["weight"]}
                 # mark cash as residual
-                invested = sum(pos[ticker]["shares"] * pos[ticker]["entry_price"] for ticker in positions)
+                invested = sum(positions[ticker]["shares"] * positions[ticker]["entry_price"] for ticker in positions)
                 cash = portfolio_value - invested
 
             # mark-to-market

@@ -118,7 +118,7 @@ def benchmark_returns(prices: dict[str, pl.DataFrame], benchmark: str = "SPY") -
     return {row["time"]: float(row["close"]) for row in df.to_dicts()}
 
 
-def summarize(results: pl.DataFrame, horizons: list[int], benchmark_map: dict[datetime, float]) -> dict[str, Any]:
+def summarize(results: pl.DataFrame, horizons: list[int]) -> dict[str, Any]:
     summary = {}
     for signal_type in results["signal_type"].unique().to_list():
         subset = results.filter(pl.col("signal_type") == signal_type)
@@ -133,13 +133,6 @@ def summarize(results: pl.DataFrame, horizons: list[int], benchmark_map: dict[da
             if col not in subset.columns:
                 continue
             rets = subset[col].to_numpy()
-            bench_rets = []
-            for row in subset.to_dicts():
-                d = row["date"]
-                b0 = benchmark_map.get(d)
-                # approx benchmark forward return using SPY close h days later
-                # simplified: same horizon average daily bench return
-            bench_avg = 0.0  # placeholder, computed below from SPY data
             stats[f"{h}d_return_mean"] = float(np.mean(rets))
             stats[f"{h}d_return_median"] = float(np.median(rets))
             stats[f"{h}d_win_rate"] = float(np.mean(rets > 0))
@@ -223,8 +216,7 @@ def main():
     signals = generate_synthetic_signals(prices, start_dt, end_dt)
     horizons = [1, 5, 20, 60]
     results = compute_forward_returns(prices, signals, horizons)
-    benchmark_map = benchmark_returns(prices, "SPY")
-    summary = summarize(results, horizons, benchmark_map)
+    summary = summarize(results, horizons)
     ml_spread = ml_decile_spread(results)
     write_report(summary, ml_spread, Path(args.output))
     logger.info("report written to %s", args.output)
