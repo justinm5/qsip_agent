@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { fetchTrendingStocks, StockRecommendation } from '../api/client'
+import { useWatchlist } from '../hooks/useWatchlist'
 import TrendingCard from './TrendingCard'
 
 interface Props {
@@ -7,6 +8,7 @@ interface Props {
 }
 
 export default function TrendingList({ onSelect }: Props) {
+  const { add, isSaved } = useWatchlist()
   const { data, isLoading, error } = useQuery<StockRecommendation[], Error>({
     queryKey: ['trending'],
     queryFn: () => fetchTrendingStocks(12),
@@ -41,9 +43,28 @@ export default function TrendingList({ onSelect }: Props) {
     <div>
       <h2 className="text-lg font-semibold text-slate-200 mb-3">Top opportunities right now</h2>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-        {data.map((stock) => (
-          <TrendingCard key={stock.ticker} stock={stock} onSelect={onSelect} />
-        ))}
+        {data.map((stock) => {
+          const saved = isSaved(stock.ticker)
+          return (
+            <div key={stock.ticker} className="relative group">
+              <TrendingCard stock={stock} onSelect={onSelect} />
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  add(stock.ticker)
+                }}
+                disabled={saved}
+                className={`absolute top-2 right-2 text-xs px-2 py-1 rounded transition-opacity opacity-0 group-hover:opacity-100 ${
+                  saved
+                    ? 'bg-slate-800 text-slate-500 cursor-default'
+                    : 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                }`}
+              >
+                {saved ? 'Saved' : 'Save'}
+              </button>
+            </div>
+          )
+        })}
       </div>
     </div>
   )

@@ -2,6 +2,7 @@ import { useState } from 'react'
 import StockCard from './StockCard'
 import StockSearch from './StockSearch'
 import TrendingList from './TrendingList'
+import Watchlist from './Watchlist'
 
 export default function Dashboard() {
   const [selectedTicker, setSelectedTicker] = useState<string | null>(null)
@@ -19,6 +20,8 @@ export default function Dashboard() {
         <section className="mb-8">
           <StockSearch onSelect={setSelectedTicker} />
         </section>
+
+        <Watchlist onSelect={setSelectedTicker} />
 
         {selectedTicker && (
           <section className="mb-8">

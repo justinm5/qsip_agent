@@ -1,11 +1,14 @@
 import { useQuery } from '@tanstack/react-query'
 import { fetchStockRecommendation, StockRecommendation } from '../api/client'
+import { useWatchlist } from '../hooks/useWatchlist'
 
 interface Props {
   ticker: string
 }
 
 export default function StockCard({ ticker }: Props) {
+  const { add, isSaved } = useWatchlist()
+  const saved = isSaved(ticker)
   const { data, isLoading, error } = useQuery<StockRecommendation, Error>({
     queryKey: ['recommendation', ticker],
     queryFn: () => fetchStockRecommendation(ticker),
@@ -84,6 +87,20 @@ export default function StockCard({ ticker }: Props) {
       </div>
 
       <p className="text-slate-300 text-sm mb-5 leading-relaxed">{data.summary}</p>
+
+      {data.recommendation !== 'No data' && (
+        <button
+          onClick={() => add(ticker)}
+          disabled={saved}
+          className={`mb-5 text-sm font-medium px-4 py-2 rounded-lg transition-colors ${
+            saved
+              ? 'bg-slate-800 text-slate-500 cursor-default'
+              : 'bg-emerald-600 hover:bg-emerald-500 text-white'
+          }`}
+        >
+          {saved ? 'Saved to watchlist' : 'Save to watchlist'}
+        </button>
+      )}
 
       {data.factors.length > 0 && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
