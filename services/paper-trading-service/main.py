@@ -80,7 +80,13 @@ def trades():
 @app.route("/paper/order", methods=["POST"])
 def manual_order():
     data = request.get_json() or {}
-    order = alpaca.place_order(data["ticker"], data["qty"], data["side"])
+    order = alpaca.place_order(
+        data["ticker"],
+        data["qty"],
+        data["side"],
+        order_type=data.get("order_type", "market"),
+        limit_price=data.get("price"),
+    )
     return jsonify(order)
 
 

@@ -144,6 +144,7 @@ services:
       TIMESCALEDB_DSN: postgres://qsip:qsip@timescaledb:5432/qsip?sslmode=disable
       REDIS_ADDR: redis:6379
       JWT_SECRET: ${JWT_SECRET:-change-me}
+      FINNHUB_KEY: ${FINNHUB_KEY:-}
       PAPER_TRADING_SERVICE_URL: http://paper-trading-service:8088
       RESEARCH_RESULTS_PATH: /app/research/signal_performance.json
       OTLP_ENDPOINT: jaeger:4317

@@ -124,5 +124,27 @@ export const fetchPaperAccount = (): Promise<PaperAccount> => api.get('/paper/ac
 export const fetchPaperPositions = (): Promise<PaperPosition[]> => api.get('/paper/positions').then((r) => r.data)
 export const fetchPaperTrades = (): Promise<PaperTrade[]> => api.get('/paper/trades').then((r) => r.data)
 
+export interface StockRecommendation {
+  ticker: string
+  name: string
+  price: number | null
+  change_pct: number
+  analyst_rating: string
+  analyst_count: number
+  recommendation: string
+  score: number
+  summary: string
+  signals: { label: string; value: string; detail: string }[]
+}
+
+export const fetchStockRecommendation = (ticker: string): Promise<StockRecommendation> =>
+  api.get(`/stocks/${encodeURIComponent(ticker)}/recommendation`).then((r) => r.data)
+
+export const fetchTrendingStocks = (limit = 12): Promise<StockRecommendation[]> =>
+  api.get(`/stocks/trending?limit=${limit}`).then((r) => r.data)
+
+export const createPaperOrder = (payload: { ticker: string; qty: number; side: string; price?: number; order_type?: string }): Promise<Record<string, unknown>> =>
+  api.post('/paper/order', payload).then((r) => r.data)
+
 export const login = (username: string, password: string): Promise<{ token: string }> =>
   api.post('/auth/login', { username, password }).then((r) => r.data)
