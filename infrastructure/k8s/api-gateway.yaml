@@ -1,0 +1,35 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-gateway
+  namespace: qsip
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: api-gateway
+  template:
+    metadata:
+      labels:
+        app: api-gateway
+    spec:
+      containers:
+        - name: api-gateway
+          image: qsip/api-gateway:latest
+          ports:
+            - containerPort: 8083
+          envFrom:
+            - configMapRef:
+                name: qsip-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-gateway
+  namespace: qsip
+spec:
+  selector:
+    app: api-gateway
+  ports:
+    - port: 8083
+      targetPort: 8083

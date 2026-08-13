@@ -1,0 +1,70 @@
+# Go
+bin/
+*.exe
+*.dll
+*.so
+*.dylib
+vendor/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.venv/
+venv/
+ENV/
+env/
+*.parquet
+*.csv
+*.pkl
+*.joblib
+*.h5
+*.onnx
+.ipynb_checkpoints/
+
+# Node
+node_modules/
+.next/
+.nuxt/
+dist/
+build/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.env
+.env.local
+.env.production
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets
+*.pem
+*.key
+secrets/
+
+# Data volumes
+volumes/
+data/raw/
+data/processed/
+
+# Models
+models/*.onnx
+models/*.pt
+models/*.pth
+models/*.bin
+models/*.gguf
+
+# Local test files
+tmp/
+temp/

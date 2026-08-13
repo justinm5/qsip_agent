@@ -1,0 +1,107 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [sec-service, api-gateway]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+          working-directory: services/${{ matrix.service }}
+          args: --timeout=5m
+      - name: Build
+        working-directory: services/${{ matrix.service }}
+        run: go mod tidy && go build ./...
+      - name: Vet
+        working-directory: services/${{ matrix.service }}
+        run: go vet ./...
+
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install deps
+        run: pip install -e . && pip install ruff pytest pytest-asyncio pytest-cov
+      - name: Lint
+        run: ruff check python services tests scripts
+      - name: Test
+        run: pytest tests -q --cov=python/qsip --cov-report=xml
+      - name: Typecheck
+        run: mypy python/qsip || true
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install
+        working-directory: frontend
+        run: npm install
+      - name: Build
+        working-directory: frontend
+        run: npm run build
+      - name: Lint
+        working-directory: frontend
+        run: npm run lint
+
+  docker:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service:
+          - sec-service
+          - api-gateway
+          - market-service
+          - news-service
+          - data-validation-service
+          - feature-service
+          - feature-store-service
+          - signal-service
+          - backtest-service
+          - portfolio-service
+          - replay-service
+          - earnings-service
+          - options-service
+          - paper-trading-service
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: |
+          if [ "${{ matrix.service }}" = "api-gateway" ] || [ "${{ matrix.service }}" = "sec-service" ]; then
+            docker build -t qsip/${{ matrix.service }}:ci ./services/${{ matrix.service }}
+          else
+            docker build -f services/${{ matrix.service }}/Dockerfile -t qsip/${{ matrix.service }}:ci .
+          fi
+
+  security:
+    runs-on: ubuntu-latest
+    needs: [docker]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build api-gateway image
+        run: docker build -t qsip/api-gateway:ci ./services/api-gateway
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'qsip/api-gateway:ci'
+          format: 'sarif'
+          output: 'trivy-results.sarif'

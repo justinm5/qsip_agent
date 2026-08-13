@@ -1,0 +1,28 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  - job_name: "api-gateway"
+    static_configs:
+      - targets: ["api-gateway:8084"]
+
+  - job_name: "sec-service"
+    static_configs:
+      - targets: ["sec-service:9091"]
+
+  - job_name: "market-service"
+    static_configs:
+      - targets: ["market-service:9091"]
+
+  - job_name: "feature-service"
+    static_configs:
+      - targets: ["feature-service:9091"]
+
+  - job_name: "signal-service"
+    static_configs:
+      - targets: ["signal-service:9091"]

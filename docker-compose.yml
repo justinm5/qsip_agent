@@ -1,0 +1,398 @@
+version: "3.9"
+
+services:
+  redpanda:
+    image: docker.redpanda.com/redpandadata/redpanda:v24.2.1
+    container_name: qsip-redpanda
+    command:
+      - redpanda
+      - start
+      - --smp
+      - "1"
+      - --memory
+      - "1G"
+      - --reserve-memory
+      - "0M"
+      - --overprovisioned
+      - --node-id
+      - "0"
+      - --kafka-addr
+      - PLAINTEXT://0.0.0.0:29092,OUTSIDE://0.0.0.0:9092
+      - --advertise-kafka-addr
+      - PLAINTEXT://redpanda:29092,OUTSIDE://localhost:9092
+      - --pandaproxy-addr
+      - PLAINTEXT://0.0.0.0:28082,OUTSIDE://0.0.0.0:8082
+      - --advertise-pandaproxy-addr
+      - PLAINTEXT://redpanda:28082,OUTSIDE://localhost:8082
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+      - "8081:8081"
+      - "8082:8082"
+    volumes:
+      - redpanda-data:/var/lib/redpanda/data
+    healthcheck:
+      test: ["CMD", "rpk", "cluster", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redpanda-console:
+    image: docker.redpanda.com/redpandadata/console:v2.7.1
+    container_name: qsip-redpanda-console
+    environment:
+      KAFKA_BROKERS: redpanda:29092
+    ports:
+      - "8080:8080"
+    depends_on:
+      redpanda:
+        condition: service_healthy
+
+  timescaledb:
+    image: timescale/timescaledb:latest-pg16
+    container_name: qsip-timescaledb
+    environment:
+      POSTGRES_USER: qsip
+      POSTGRES_PASSWORD: qsip
+      POSTGRES_DB: qsip
+    ports:
+      - "5432:5432"
+    volumes:
+      - timescale-data:/var/lib/postgresql/data
+      - ./migrations/timescaledb:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U qsip"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis/redis-stack-server:latest
+    container_name: qsip-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --save 60 1 --loglevel warning
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  minio:
+    image: quay.io/minio/minio:latest
+    container_name: qsip-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: qsip
+      MINIO_ROOT_PASSWORD: qsip12345678
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: qsip-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: qsip
+      GF_SECURITY_ADMIN_PASSWORD: qsip
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./infrastructure/docker/grafana/provisioning:/etc/grafana/provisioning
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: qsip-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./infrastructure/docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-data:/prometheus
+
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: qsip-jaeger
+    ports:
+      - "16686:16686"
+      - "14268:14268"
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: qsip-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+
+  api-gateway:
+    build:
+      context: ./services/api-gateway
+      dockerfile: Dockerfile
+    container_name: qsip-api-gateway
+    ports:
+      - "8083:8083"
+      - "8084:8084"
+    environment:
+      KAFKA_BROKERS: redpanda:29092
+      TIMESCALEDB_DSN: postgres://qsip:qsip@timescaledb:5432/qsip?sslmode=disable
+      REDIS_ADDR: redis:6379
+      JWT_SECRET: ${JWT_SECRET:-change-me}
+      PAPER_TRADING_SERVICE_URL: http://paper-trading-service:8088
+      RESEARCH_RESULTS_PATH: /app/research/signal_performance.json
+      OTLP_ENDPOINT: jaeger:4317
+    volumes:
+      - ./research:/app/research:ro
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      timescaledb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  sec-service:
+    build:
+      context: ./services/sec-service
+      dockerfile: Dockerfile
+    container_name: qsip-sec-service
+    environment:
+      KAFKA_BROKERS: redpanda:29092
+      TIMESCALEDB_DSN: postgres://qsip:qsip@timescaledb:5432/qsip?sslmode=disable
+      REDIS_ADDR: redis:6379
+      SEC_USER_AGENT: qsip-platform contact@example.com
+      OTEL_ENDPOINT: jaeger:4317
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      timescaledb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  market-service:
+    build:
+      context: .
+      dockerfile: ./services/market-service/Dockerfile
+    container_name: qsip-market-service
+    environment:
+      KAFKA_BROKERS: redpanda:29092
+      TIMESCALEDB_DSN: postgres://qsip:qsip@timescaledb:5432/qsip?sslmode=disable
+      REDIS_ADDR: redis:6379
+      POLYGON_API_KEY: ${POLYGON_API_KEY:-}
+      ALPACA_API_KEY: ${ALPACA_API_KEY:-}
+      ALPACA_SECRET_KEY: ${ALPACA_SECRET_KEY:-}
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      timescaledb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  news-service:
+    build:
+      context: .
+      dockerfile: ./services/news-service/Dockerfile
+    container_name: qsip-news-service
+    environment:
+      KAFKA_BROKERS: redpanda:29092
+      TIMESCALEDB_DSN: postgres://qsip:qsip@timescaledb:5432/qsip?sslmode=disable
+      REDIS_ADDR: redis:6379
+      NEWSAPI_KEY: ${NEWSAPI_KEY:-}
+      FINNHUB_KEY: ${FINNHUB_KEY:-}
+      OLLAMA_HOST: http://ollama:11434
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      timescaledb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  earnings-service:
+    build:
+      context: .
+      dockerfile: ./services/earnings-service/Dockerfile
+    container_name: qsip-earnings-service
+    environment:
+      KAFKA_BROKERS: redpanda:29092
+      TIMESCALEDB_DSN: postgres://qsip:qsip@timescaledb:5432/qsip?sslmode=disable
+      REDIS_ADDR: redis:6379
+      ALPHA_VANTAGE_KEY: ${ALPHA_VANTAGE_KEY:-}
+      FMP_KEY: ${FMP_KEY:-}
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      timescaledb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  options-service:
+    build:
+      context: .
+      dockerfile: ./services/options-service/Dockerfile
+    container_name: qsip-options-service
+    environment:
+      KAFKA_BROKERS: redpanda:29092
+      TIMESCALEDB_DSN: postgres://qsip:qsip@timescaledb:5432/qsip?sslmode=disable
+      REDIS_ADDR: redis:6379
+      POLYGON_API_KEY: ${POLYGON_API_KEY:-}
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      timescaledb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  data-validation-service:
+    build:
+      context: .
+      dockerfile: ./services/data-validation-service/Dockerfile
+    container_name: qsip-data-validation-service
+    environment:
+      KAFKA_BROKERS: redpanda:29092
+      TIMESCALEDB_DSN: postgres://qsip:qsip@timescaledb:5432/qsip?sslmode=disable
+      REDIS_ADDR: redis:6379
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: qsip
+      MINIO_SECRET_KEY: qsip12345678
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      timescaledb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_started
+
+  feature-service:
+    build:
+      context: .
+      dockerfile: ./services/feature-service/Dockerfile
+    container_name: qsip-feature-service
+    environment:
+      KAFKA_BROKERS: redpanda:29092
+      TIMESCALEDB_DSN: postgres://qsip:qsip@timescaledb:5432/qsip?sslmode=disable
+      REDIS_ADDR: redis:6379
+      OTEL_ENDPOINT: jaeger:4317
+    depends_on:
+      - data-validation-service
+
+  feature-store-service:
+    build:
+      context: .
+      dockerfile: ./services/feature-store-service/Dockerfile
+    container_name: qsip-feature-store-service
+    ports:
+      - "8085:8085"
+    environment:
+      TIMESCALEDB_DSN: postgres://qsip:qsip@timescaledb:5432/qsip?sslmode=disable
+      REDIS_ADDR: redis:6379
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+
+  signal-service:
+    build:
+      context: .
+      dockerfile: ./services/signal-service/Dockerfile
+    container_name: qsip-signal-service
+    environment:
+      KAFKA_BROKERS: redpanda:29092
+      TIMESCALEDB_DSN: postgres://qsip:qsip@timescaledb:5432/qsip?sslmode=disable
+      REDIS_ADDR: redis:6379
+      OLLAMA_HOST: http://ollama:11434
+      MODEL_PATH: /models
+    volumes:
+      - signal-models:/models
+    depends_on:
+      - feature-service
+
+  backtest-service:
+    build:
+      context: .
+      dockerfile: ./services/backtest-service/Dockerfile
+    container_name: qsip-backtest-service
+    environment:
+      KAFKA_BROKERS: redpanda:29092
+      TIMESCALEDB_DSN: postgres://qsip:qsip@timescaledb:5432/qsip?sslmode=disable
+      REDIS_ADDR: redis:6379
+    depends_on:
+      - signal-service
+
+  portfolio-service:
+    build:
+      context: .
+      dockerfile: ./services/portfolio-service/Dockerfile
+    container_name: qsip-portfolio-service
+    ports:
+      - "8086:8086"
+    environment:
+      TIMESCALEDB_DSN: postgres://qsip:qsip@timescaledb:5432/qsip?sslmode=disable
+      REDIS_ADDR: redis:6379
+    depends_on:
+      - signal-service
+
+  replay-service:
+    build:
+      context: .
+      dockerfile: ./services/replay-service/Dockerfile
+    container_name: qsip-replay-service
+    ports:
+      - "8087:8087"
+    environment:
+      KAFKA_BROKERS: redpanda:29092
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: qsip
+      MINIO_SECRET_KEY: qsip12345678
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      minio:
+        condition: service_started
+
+  paper-trading-service:
+    build:
+      context: .
+      dockerfile: ./services/paper-trading-service/Dockerfile
+    container_name: qsip-paper-trading-service
+    ports:
+      - "8088:8088"
+    environment:
+      KAFKA_BROKERS: redpanda:29092
+      TIMESCALEDB_DSN: postgres://qsip:qsip@timescaledb:5432/qsip?sslmode=disable
+      REDIS_ADDR: redis:6379
+      ALPACA_API_KEY: ${ALPACA_API_KEY:-}
+      ALPACA_SECRET_KEY: ${ALPACA_SECRET_KEY:-}
+    depends_on:
+      - signal-service
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: qsip-frontend
+    ports:
+      - "3001:80"
+    depends_on:
+      - api-gateway
+
+volumes:
+  redpanda-data:
+  timescale-data:
+  redis-data:
+  minio-data:
+  grafana-data:
+  prometheus-data:
+  ollama-data:
+  signal-models:

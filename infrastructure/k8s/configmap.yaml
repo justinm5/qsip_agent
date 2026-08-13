@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: qsip-config
+  namespace: qsip
+data:
+  KAFKA_BROKERS: "redpanda:29092"
+  TIMESCALEDB_DSN: "postgres://qsip:qsip@timescaledb:5432/qsip?sslmode=disable"
+  REDIS_ADDR: "redis:6379"
+  OLLAMA_HOST: "http://ollama:11434"
+  SEC_USER_AGENT: "QSIP contact@example.com"

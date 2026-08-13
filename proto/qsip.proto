@@ -1,0 +1,75 @@
+syntax = "proto3";
+
+package qsip.v1;
+
+option go_package = "github.com/justinm5/qsip_agent/proto/qsip";
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/struct.proto";
+
+message Event {
+  string event_id = 1;
+  string source = 2;
+  string event_type = 3;
+  string ticker = 4;
+  google.protobuf.Timestamp timestamp = 5;
+  google.protobuf.Struct payload = 6;
+  google.protobuf.Struct metadata = 7;
+}
+
+message Signal {
+  string signal_id = 1;
+  google.protobuf.Timestamp timestamp = 2;
+  string ticker = 3;
+  string signal_type = 4;
+  string direction = 5;
+  double score = 6;
+  google.protobuf.Struct features = 7;
+  double ml_score = 8;
+  google.protobuf.Struct metadata = 9;
+}
+
+message BacktestResult {
+  string signal_id = 1;
+  string ticker = 2;
+  google.protobuf.Timestamp entry_time = 3;
+  google.protobuf.Timestamp exit_time = 4;
+  int32 holding_days = 5;
+  double entry_price = 6;
+  double exit_price = 7;
+  double return_pct = 8;
+  double excess_return_pct = 9;
+  double benchmark_return_pct = 10;
+  double max_drawdown_pct = 11;
+}
+
+message TickerRequest {
+  string ticker = 1;
+  int32 limit = 2;
+}
+
+message SignalList {
+  repeated Signal signals = 1;
+}
+
+message BacktestSummary {
+  string ticker = 1;
+  string signal_type = 2;
+  int32 total_signals = 3;
+  double win_rate = 4;
+  double average_return = 5;
+  double sharpe_ratio = 6;
+  double max_drawdown = 7;
+  double avg_holding_days = 8;
+}
+
+message Empty {}
+
+service SignalService {
+  rpc GetSignals(TickerRequest) returns (SignalList);
+  rpc StreamSignals(Empty) returns (stream Signal);
+}
+
+service BacktestService {
+  rpc GetBacktestSummary(TickerRequest) returns (BacktestSummary);
+}
